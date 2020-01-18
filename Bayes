@@ -1,0 +1,282 @@
+#!/usr/bin/env python
+import roslib
+import rospkg
+import numpy
+import sys
+import math
+import rospy
+import rosbag
+from tf.transformations import euler_from_quaternion
+from tf.transformations import quaternion_from_euler
+from visualization_msgs.msg import Marker
+from std_msgs.msg import Int32, String
+from geometry_msgs.msg import Point
+
+current_position_array = numpy.zeros((35.0, 35.0, 4.0))
+mar = Marker()
+position_tagging = numpy.array([[125, 525],[125, 325],[125, 125],[425, 125],[425, 325],[425, 525]])
+roslib.load_manifest("ros_pa3")
+rospack=rospkg.RosPack()
+path=rospack.get_path('ros_pa3')
+path=path+'/scripts'
+mark = Marker()
+tagged_positions = numpy.array([[125, 525],[125, 325],[125, 125],[425, 125],[425, 325],[425, 525]])
+
+def publish_tags(prod): #marking the position on the grid with the mapping values provided through the gird.bag
+
+	for i in numpy.arange(tagged_positions.shape[0]):
+		mark = Marker()
+		mark.header.frame_id = "/map" #mapping bag
+		mark.header.stamp = rospy.Time.now()
+		mark.ns = "tag_rviz" #displaying the markers on rviz
+		mark.id = (i+1)
+		mark.type = Marker.CUBE
+		mark.pose.position.x = tagged_positions[i,0]/100.0 -4
+		mark.pose.position.y = tagged_positions[i,1]/100.0 -4
+		mark.pose.position.z = 0
+		mark.scale.x = 0.1
+		mark.scale.y = 0.1
+		mark.scale.z = 0.1 
+		mark.color.r = 1.0
+		mark.color.g = 1.0
+		mark.color.b = 0.0
+		mark.color.a = 1.0
+		mark.action = Marker.ADD
+		prod.publish(mark)
+		while (prod.get_num_connections() < 1):
+			yoo = 1
+		while (prod.get_num_connections() < 1):
+			yoo = 1
+
+		for i in numpy.arange(tagged_positions.shape[0]):
+			mark = Marker()
+			#mpping the grid
+			mark.header.frame_id = "/map"
+			mark.header.stamp = rospy.Time.now()
+			mark.ns = "tag_rviz"
+			mark.type = Marker.CUBE			
+			mark.id = (i+1)
+			#positions on which we are tagging the markers on the 3d grid
+			mark.pose.position.x = tagged_positions[5-i,0]/100.0 -4
+			mark.pose.position.y = tagged_positions[5-i,1]/100.0 -4
+			# print("x_pose",m.pose.position.x) 
+			# print("y_pose",m.pose.position.y)
+
+			mark.pose.position.z = 0 #colour pattern of the markers
+			mark.color.r = 124.0
+			mark.color.g = 252.0
+			mark.color.b = 0.0
+			mark.color.a = 1.0				
+			mark.scale.x = 0.1
+			mark.scale.y = 0.1
+			mark.scale.z = 0.1 
+			mark.action = Marker.ADD
+			prod.publish(mark)
+			while (prod.get_num_connections() < 1):
+				yoo = 1
+			while (prod.get_num_connections() < 1):
+				yoo = 1
+
+def init(): #detecting the rotation of the robot
+	rate = rospy.Rate(10)
+	bag = rosbag.Bag('/home/apollo/catkin_ws/src/ros_pa3/scripts/grid.bag','r') #use your local path for setup
+	
+	current_position_array[11,27, 2 ] = 1
+	prod = rospy.Publisher('tag_marker', Marker, queue_size=150)
+	
+	publish_tags(prod)
+	try:
+		for topic, msg, time_stamp in bag.read_messages(topics=['Movements', 'Observations']):
+			if topic == 'Movements':
+				rotation1 = numpy.degrees((euler_from_quaternion([msg.rotation1.x,msg.rotation1.y,msg.rotation1.z,msg.rotation1.w]))[2])
+				rotation2 = numpy.degrees((euler_from_quaternion([msg.rotation2.x,msg.rotation2.y,msg.rotation2.z,msg.rotation2.w]))[2])
+				new_pos(rotation1, msg.translation*100, rotation2)
+			else: 
+				rad = msg.bearing #calculating angle
+				rad = numpy.degrees((euler_from_quaternion([rad.x, rad.y, rad.z, rad.w]))[2])
+				distance = msg.range * 100				
+				pos_obs(msg.tagNum, distance, rad)
+	finally:
+		bag.close()
+def coord(x,y):
+	x2=(x+1)*20-10	
+	y2=(y+1)*20-10
+	return x2,y2
+
+def cell(x,y):			# x,y in cm
+	x=round(x/20)
+	if x>34:
+		x=34
+	elif x<0:
+		x=0
+	y=round(y/20)
+	if y>34:
+		y=34
+	elif y<0:
+		y=0	
+	return x,y
+
+def new_pos(rot1, trans, rot2):
+	global current_position_array, temp_pos
+	temp_pos = current_position_array
+	current_position_array = numpy.copy(temp_pos)
+	final_p = 0
+	for temp_i in numpy.arange(current_position_array.shape[0]):
+		for temp_j in numpy.arange(current_position_array.shape[1]):
+			for temp_k in numpy.arange(current_position_array.shape[2]):
+				if temp_pos[temp_i, temp_j, temp_k] < 0.1:
+					continue
+				for i in numpy.arange(current_position_array.shape[0]):
+					for j in numpy.arange(current_position_array.shape[1]):
+						for k in numpy.arange(current_position_array.shape[2]):
+							rot1_tmp, trans_tmp, rot2_tmp = Calculate(i, j, k, temp_i, temp_j, temp_k)
+							trans_p = (1.0/(numpy.sqrt(2*numpy.pi)*10))*numpy.power(numpy.e,-1.0*(((trans_tmp-trans)**2)/(2.0*10**2)))
+							#first rotation along the 45 degree angle
+							rot1_p = (1.0/(numpy.sqrt(2*numpy.pi)*45))*numpy.power(numpy.e,-1.0*(((rot1_tmp-rot1)**2)/(2.0*45**2)))
+							#second rotation along the 135 degree angle
+							rot2_p = (1.0/(numpy.sqrt(2*numpy.pi)*45))*numpy.power(numpy.e,-1.0*(((rot2_tmp-rot2)**2)/(2.0*45**2)))
+							value = temp_pos[temp_i, temp_j, temp_k] * trans_p * rot1_p * rot2_p
+							current_position_array[i, j, k] = current_position_array[i, j, k] + value
+							final_p = final_p + value
+	current_position_array = current_position_array / final_p
+	index = numpy.argmax(current_position_array)
+	disp_angle = index % current_position_array.shape[2]
+	# degree_angle_disp = math.degrees(disp_angle)
+	index = index / current_position_array.shape[2]
+	disp_y = index % current_position_array.shape[1]
+	index = index / current_position_array.shape[1]
+	disp_x = index % current_position_array.shape[0]
+	# print "P:(",disp_x,"," ,disp_y,"," ,degree_angle_disp,")" 
+	rviz_display(disp_x, disp_y, disp_angle)
+
+
+def rviz_one(x, y, z):
+	global current_position_array,mark
+	prod = rospy.Publisher('line_marker', Marker, queue_size=150)
+	mark.header.frame_id = "/map"
+	mark.header.stamp = rospy.Time.now()
+	mark.id = 0
+	mark.ns = "line_rviz"	
+	mark.type = Marker.LINE_STRIP
+	mark.color.r = 10.0
+	mark.color.g = 110.0
+	mark.color.b = 56.0
+	mark.color.a = 1.0	
+	mark.scale.x = 0.05
+	mark.scale.y = 0.0
+	mark.scale.z = 0.0 
+	point = Point()
+	display_angle, display_x, display_y = return_pos(x, y, z)
+	print "U:", "(", display_x/100.0,",", display_y/100.0,",", display_angle, ")"
+	point.x = display_x/100.0 -4.0
+	point.y = display_y/100.0 -4.0
+	#print("X :", display_x/100.0)
+	#print("Y :", display_y/100.0)
+	point.z = 0
+	mark.points.append(point)
+	mark.action = Marker.ADD
+	prod.publish(mark)
+	while (prod.get_num_connections() < 1):
+		yo = 1
+
+def pos_obs(tag_number, trans, rot):
+	global current_position_array, temp_pos
+	temp_pos = current_position_array
+	current_position_array = numpy.copy(temp_pos)
+	final_p = 0
+	for i in numpy.arange(current_position_array.shape[0]):
+		for j in numpy.arange(current_position_array.shape[1]):
+			for k in numpy.arange(current_position_array.shape[2]):
+				rot_tmp, trans_tmp = Observation(i, j, k, tag_number)
+				rot_prb = (1.0/(numpy.sqrt(2*numpy.pi)*45))*numpy.power(numpy.e,-1.0*(((rot_tmp-rot)**2)/(2.0*45**2)))
+				trans_prb = (1.0/(numpy.sqrt(2*numpy.pi)*10))*numpy.power(numpy.e,-1.0*(((trans_tmp-trans)**2)/(2.0*10**2)))
+				value = temp_pos[i, j, k] * trans_prb * rot_prb
+				current_position_array[i, j, k] = value
+				final_p = final_p + value
+	current_position_array = current_position_array / final_p
+	index = numpy.argmax(current_position_array)
+	index_angle = index % current_position_array.shape[2]
+	# degree_angle_index = math.degrees(index_angle)
+	index = index / current_position_array.shape[2]
+	index_y = index % current_position_array.shape[1]
+	index = index / current_position_array.shape[1]
+	index_x = index % current_position_array.shape[0]
+	# print"U:(",index_x,"," ,index_y,"," ,degree_angle_index,")"
+	rviz_one(index_x, index_y, index_angle)
+
+def return_pos(i, j, k):
+	rad = -135 +  k * 90
+	x = i * 20 + 10
+	y = j * 20 + 10
+	return rad, x, y
+
+def rviz_display(x, y, z):
+	global current_position_array,mark
+	prod = rospy.Publisher('line_marker', Marker, queue_size=150)
+	mark.header.frame_id = "/map"
+	mark.header.stamp = rospy.Time.now()
+	mark.id = 0
+	mark.ns = "line_rviz"	
+	mark.type = Marker.LINE_STRIP
+	mark.color.r = 10.0
+	mark.color.g = 110.0
+	mark.color.b = 56.0
+	mark.color.a = 1.0	
+	mark.scale.x = 0.05
+	mark.scale.y = 0.0
+	mark.scale.z = 0.0 
+	point = Point()
+	display_angle, display_x, display_y = return_pos(x, y, z)
+	print "P:", "(", display_x/100.0,",", display_y/100.0,",", display_angle, ","
+	point.x = display_x/100.0 -4.0
+	point.y = display_y/100.0 -4.0
+	#print("X :", display_x/100.0)
+	#print("Y :", display_y/100.0)
+	point.z = 0
+	mark.points.append(point)
+	mark.action = Marker.ADD
+	prod.publish(mark)
+	while (prod.get_num_connections() < 1):
+		yo = 1
+
+
+def Calculate(x, y, z, temp_x, temp_y, temp_z):
+	rad1, t1_x, t1_y = return_pos(x, y, z)
+	rad2, t2_x, t2_y = return_pos(temp_x, temp_y, temp_z)
+	trans = numpy.sqrt((t1_x - t2_x) ** 2 + (t1_y - t2_y) ** 2)
+	# print "P:(",disp_x,"," ,disp_y,"," ,degree_angle_disp,")" 
+	angle = numpy.degrees(numpy.arctan2(t1_y-t2_y, t1_x - t2_x))
+	# print("angle", angle)
+	rotation1 = rad1 - angle	
+	rotation2 = angle - rad2
+	if rotation2 > 180:
+		rotation2 = rotation2 - 360
+	elif rotation2 < -180:
+		rotation2 = rotation2 + 360		
+	if rotation1 > 180:
+		rotation1 = rotation1 - 360
+	elif rotation1 < -180:
+		rotation1 = rotation1 + 360
+	return rotation2, trans, rotation1
+
+
+def Observation(x, y, z, tag_number):
+	global tagged_positions
+	rotation, trans_x, trans_y = return_pos(x, y, z)
+	#print(",",trans_x, "",rotation)
+	angle = numpy.degrees(numpy.arctan2(tagged_positions[tag_number,1]-trans_y, tagged_positions[tag_number,0] - trans_x))	
+	trans = numpy.sqrt((trans_x - tagged_positions[tag_number,0]) ** 2 + (trans_y - tagged_positions[tag_number,1]) ** 2)
+	rad = angle - rotation
+	if rad > 180:
+		rad = rad - 360
+	elif rad < -180:
+		rad = rad + 360
+	return rad, trans
+
+
+if __name__ == '__main__':
+	try:
+		rospy.init_node('bayes')
+		init()
+	except rospy.ROSInterruptException:
+		pass
